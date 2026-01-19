@@ -1,0 +1,4 @@
+requests
+pandas
+joblib
+rank_bm25
