@@ -1102,8 +1102,7 @@ class IssueSpamDetector(BaseDetector):
 
     def _load_spam_model(self):
         """Load spam detection model"""
-        model_path = self.detection_params.get('model_path',
-                                               'mlartifacts/2/0579ea92a6c7494e9bfdf42813fe3867/artifacts/nn/model.pkl')
+        model_path = self.detection_params.get('model_path', 'artifacts/nn/model.pkl') # Updated default path
 
         try:
             import pickle
