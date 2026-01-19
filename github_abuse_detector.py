@@ -1740,10 +1740,10 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description='GitHub Abuse Detection Framework')
-    parser.add_argument('--csv', default="test_data/fake_stars_dataset_other.csv", help='Input CSV file path')
+    parser.add_argument('--csv', default="template.csv", help='Input CSV file path')
     parser.add_argument('--category', help='Detection category')
     parser.add_argument('--url', help='Detection URL')
-    parser.add_argument('--output', default='test_data_results/fake_stars_results_small.csv', help='Output file path')
+    parser.add_argument('--output', default='output.csv', help='Output file path')
 
     args = parser.parse_args()
 
