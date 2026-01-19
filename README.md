@@ -46,6 +46,10 @@ The framework uses a configuration file (`config.template.json`) to define detec
    pip install -r requirements.txt
    ```
 3. Configure the `config.template.json` file with y our GitHub tokens and detection parameters.
+4. Extract the `artifacts.7z` file, which contains the detection tool for the `issue_spam` category:
+   ```bash
+   7z x artifacts.7z
+   ```
 
 ## Running the Detector
 
