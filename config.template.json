@@ -3,17 +3,15 @@
     "fake_stars": {
       "github_token": "YOUR_GITHUB_TOKEN_1",
       "detection_params": {
-        "followers_threshold": 2,
-        "following_threshold": 2,
-        "repos_threshold": 5,
-        "account_age_days": 730,
-        "check_email": true,
-        "check_bio": true,
-        "similar_star_time_days": 30,
-        "fake_star_conditions": 4,
-        "fake_star_threshold": 0.1,
-        "max_stargazers_to_check": 100,
-        "per_page": 30
+        "max_actions": 2,
+        "max_repos": 1,
+        "max_orgs": 1,
+        "max_workers": 15,
+        "stargazers_per_page": 100,
+        "max_stargazers_to_check": 4000,
+        "min_stars_for_detection": 30,
+        "rate_limit_delay": 1.5,
+        "user_agent": "GitHub-Abuse-Detector-FakeStars-SQL/1.0"
       },
       "api_settings": {
         "request_timeout": 30,

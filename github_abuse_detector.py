@@ -13,9 +13,10 @@ from difflib import SequenceMatcher
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 import warnings
-from reputation_farming_core import ReputationFarmingCoreDetector, AbuseEvidence as RFAbuseEvidence
-from spoofed_contributor_core import SpoofedContributorCoreDetector, AbuseEvidence as SCAbuseEvidence
-from typo_squatting_core import TypoSquattingCoreDetector
+from core_reputation_farming import ReputationFarmingCoreDetector, AbuseEvidence as RFAbuseEvidence
+from core_spoofed_contributor import SpoofedContributorCoreDetector, AbuseEvidence as SCAbuseEvidence
+from core_typo_squatting import TypoSquattingCoreDetector
+from core_fake_stars import FakeStarsCoreDetector, AbuseEvidence as AbuseEvidence_FSR
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -134,59 +135,57 @@ class BaseDetector(ABC):
 
 
 class FakeStarsDetector(BaseDetector):
-    """Fake stars detector"""
+    """基于SQL逻辑的虚假星星检测器"""
 
     def get_sub_category(self) -> str:
         return "fake_stars"
+
+    def __init__(self, config: Dict):
+        super().__init__(config)
+
+        detection_params = self.detection_params
+
+        core_config = {
+            'max_actions': detection_params.get('max_actions', 2),
+            'max_repos': detection_params.get('max_repos', 1),
+            'max_orgs': detection_params.get('max_orgs', 1),
+            'stargazers_per_page': detection_params.get('stargazers_per_page', 100),
+            'max_stargazers_to_check': detection_params.get('max_stargazers_to_check', 300),
+            'min_stars_for_detection': detection_params.get('min_stars_for_detection', 30),
+            'min_low_activity_stars': detection_params.get('min_low_activity_stars', 5),
+            'min_low_activity_percentage': detection_params.get('min_low_activity_percentage', 0.1),
+            'activity_days_around_star': detection_params.get('activity_days_around_star', 60),
+            'max_retries': self.api_settings.get('max_retries', 3),
+            'request_timeout': self.api_settings.get('request_timeout', 30),
+            'rate_limit_delay': self.api_settings.get('rate_limit_delay', 1.5)
+        }
+
+        self.core_detector = FakeStarsCoreDetector(
+            github_token=self.github_token,
+            config=core_config
+        )
 
     def detect(self, url: str) -> DetectionResult:
         try:
             owner, repo_name = self.extract_repo_info(url)
 
-            # Get stargazers information
-            stargazers = self._get_stargazers(owner, repo_name)
-            if not stargazers:
-                return DetectionResult(
-                    sub_category="fake_stars",
-                    url=url,
-                    is_abuse=False,
-                    confidence=0.0,
-                    details={"error": "No stargazers found"},
-                    timestamp=datetime.now().isoformat()
-                )
+            # 使用核心检测器进行检测
+            is_abuse, evidences, confidence = self.core_detector.detect_repository_abuse(owner, repo_name)
 
-            # Detect fake stars
-            fake_count = 0
-            suspicious_users = []
-
-            for star_info in stargazers:
-                if self._is_fake_star(star_info):
-                    fake_count += 1
-                    suspicious_users.append({
-                        "username": star_info["user"]["login"],
-                        "followers": star_info["user"]["followers"]
-                    })
-
-            # Determine if abuse exists
-            fake_percentage = fake_count / len(stargazers)
-            is_abuse = fake_percentage > self.detection_params.get('fake_star_threshold', 0.1)
+            # 生成详细信息
+            details = self._generate_details(owner, repo_name, is_abuse, evidences, confidence)
 
             return DetectionResult(
                 sub_category="fake_stars",
                 url=url,
                 is_abuse=is_abuse,
-                confidence=min(fake_percentage, 1.0),
-                details={
-                    "total_stars": len(stargazers),
-                    "fake_stars": fake_count,
-                    "fake_percentage": fake_percentage,
-                    "suspicious_users": suspicious_users[:5]  # Show only top 5
-                },
+                confidence=confidence,
+                details=details,
                 timestamp=datetime.now().isoformat()
             )
 
         except Exception as e:
-            logger.error(f"Fake stars detection failed: {e}")
+            logger.error(f"基于SQL的虚假星星检测失败: {e}")
             return DetectionResult(
                 sub_category="fake_stars",
                 url=url,
@@ -196,68 +195,55 @@ class FakeStarsDetector(BaseDetector):
                 timestamp=datetime.now().isoformat()
             )
 
-    def _get_stargazers(self, owner: str, repo_name: str) -> List[Dict]:
-        """Get stargazers information"""
-        stargazers = []
-        page = 1
-        per_page = self.detection_params.get('per_page', 30)
-        max_stargazers = self.detection_params.get('max_stargazers_to_check', 100)
+    def _generate_details(self, owner: str, repo_name: str, is_abuse: bool,
+                          evidences: List[AbuseEvidence_FSR], confidence: float) -> Dict:
+        """生成详细信息报告"""
+        repo_full_name = f"{owner}/{repo_name}"
 
-        while len(stargazers) < max_stargazers:
-            url = f"https://api.github.com/repos/{owner}/{repo_name}/stargazers"
-            params = {'page': page, 'per_page': per_page}
+        if not evidences:
+            return {
+                "repository": repo_full_name,
+                "abuse_detected": False,
+                "total_evidences": 0,
+                "confidence": confidence,
+                "message": "未发现基于SQL逻辑的虚假星星行为"
+            }
 
-            data = self.make_api_call(url, params)
-            if not data:
-                break
+        evidence = evidences[0]
 
-            # Get user details
-            for item in data:
-                username = item.get('login') or item.get('user', {}).get('login')
-                if not username:
-                    continue
-
-                user_info = self.make_api_call(f"https://api.github.com/users/{username}")
-                if user_info:
-                    star_info = {
-                        "user": user_info,
-                        "starred_at": item.get('starred_at', datetime.now().isoformat() + 'Z')
-                    }
-                    stargazers.append(star_info)
-
-                if len(stargazers) >= max_stargazers:
-                    break
-
-            if len(data) < per_page:
-                break
-
-            page += 1
-
-        return stargazers
-
-    def _is_fake_star(self, star_info: Dict) -> bool:
-        """Determine if a star is fake"""
-        user = star_info["user"]
-
-        try:
-            create_time = datetime.fromisoformat(user['created_at'].replace('Z', '+00:00'))
-            star_time = datetime.fromisoformat(star_info['starred_at'].replace('Z', '+00:00'))
-
-            conditions = [
-                user['followers'] < self.detection_params['followers_threshold'],
-                user['following'] < self.detection_params['following_threshold'],
-                user['public_repos'] < self.detection_params['repos_threshold'],
-                (datetime.now(timezone.utc) - create_time).days < self.detection_params['account_age_days'],
-                not user.get('email') if self.detection_params.get('check_email', True) else False,
-                not user.get('bio') if self.detection_params.get('check_bio', True) else False,
-                (star_time - create_time).days < self.detection_params['similar_star_time_days']
-            ]
-
-            satisfied = sum(conditions)
-            return satisfied >= self.detection_params['fake_star_conditions']
-
-        except Exception:
-            return False
+        return {
+            "repository": repo_full_name,
+            "abuse_detected": True,
+            "total_evidences": len(evidences),
+            "confidence": confidence,
+            "detection_strategy": "low-activity-user-analysis",
+            "total_stars": evidence.total_stars,
+            "low_activity_stars": evidence.low_activity_stars,
+            "low_activity_percentage": round(evidence.low_activity_percentage, 4),
+            "meets_count_threshold": evidence.low_activity_stars >= self.core_detector.config.get(
+                'min_low_activity_stars', 5),
+            "meets_percentage_threshold": evidence.low_activity_percentage >= self.core_detector.config.get(
+                'min_low_activity_percentage', 0.1),
+            "stargazers_checked": min(evidence.total_stars,
+                                      self.core_detector.config.get('max_stargazers_to_check', 300)),
+            "detection_reason": evidence.detection_reason,
+            "low_activity_users_sample": evidence.low_activity_users[:5],  # 显示前5个低活跃用户
+            "thresholds": {
+                "min_low_activity_stars": self.core_detector.config.get('min_low_activity_stars', 5),
+                "min_low_activity_percentage": self.core_detector.config.get('min_low_activity_percentage', 0.1),
+                "max_actions": self.core_detector.config.get('max_actions', 2),
+                "max_repos": self.core_detector.config.get('max_repos', 1),
+                "max_orgs": self.core_detector.config.get('max_orgs', 1),
+                "activity_days_around_star": self.core_detector.config.get('activity_days_around_star', 60)
+            },
+            "detection_criteria": [
+                "first_active = last_active (同一天活跃)",
+                "n_actions <= 2",
+                "n_repos <= 1",
+                "n_orgs <= 1"
+            ],
+            "summary": f"发现 {evidence.low_activity_stars} 个低活跃度用户打星 ({evidence.low_activity_percentage:.1%})"
+        }
 
 
 class AutomaticUpdatesDetector(BaseDetector):
